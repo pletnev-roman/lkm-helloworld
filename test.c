@@ -1,115 +1,122 @@
+#include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/miscdevice.h>
 #include <linux/module.h>
-#include <linux/proc_fs.h>
-#include <linux/kernel.h>
-#include <linux/string.h>
-#include <linux/skbuff.h>
 
-static struct proc_dir_entry *mf_proc_file_operand1;
-static struct proc_dir_entry *mf_proc_file_operand2;
-static struct proc_dir_entry *mf_proc_file_operator;
-int a, b;
-char c=']';
-bool gota=0, gotb=0;
+#include <asm/uaccess.h>
 
-int read_proc(char *buffer, char **start, off_t offset, int size, int *eof, void *data)
+int a=4, b=13;
+char c='*';
+
+int result_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
 {
 	char output[16];
 
-	if (offset != 0)
+	if (*ppos != 0)
 		return 0;
-
-	if ((!gota) || (!gotb) || ((c != '+')&&(c != '-')&&(c != '*')&&(c != '/'))) {
-		char err_output[] = "Some of parameters are not initialized!\n";
-		strcpy(buffer, err_output);
-		*eof = 1;
-		return strlen(err_output);
-	}
 
 	switch (c) {
 	case '+':
-		sprintf(output, "%d\n", a+b);
+		sprintf(output, "%d + %d = %d\n", a, b, a+b);
 		break;
 	case '-':
-                sprintf(output, "%d\n", a-b);
+                sprintf(output, "%d - %d = %d\n", a, b, a-b);
                 break;
 	case '*':
-                sprintf(output, "%d\n", a*b);
+                sprintf(output, "%d * %d = %d\n", a, b, a*b);
                 break;
 	case '/':
-                sprintf(output, "%d\n", a/b);
+                sprintf(output, "%d / %d = %d\n", a, b, a/b);
                 break;
 	default:
 		break;
 	}
 
 	strcpy(buffer, output);
-	*eof = 1;
+	*ppos = strlen(output);
 	return strlen(output);
 }
 
-int procf_write_operand1(struct file *file, const char *buffer, unsigned long count, void *data)
-{
-	char input[16];
-	printk(KERN_INFO "procf_write_operand1 is called.\n");
-	if (copy_from_user(input, buffer, count))
-		return -EFAULT;
-	sscanf(input, "%d", &a);
-	gota = 1;
-	return count;
-}
-
-int procf_write_operand2(struct file *file, const char *buffer, unsigned long count, void *data)
+int write_operand1(struct file *file, const char *buffer, unsigned long count, void *data)
 {
         char input[16];
-	printk(KERN_INFO "procf_write_operand2 is called.\n");
+        printk(KERN_INFO "write_operand1 is called, buffer[0]=%c.\n", buffer[0]);
         if (copy_from_user(input, buffer, count))
                 return -EFAULT;
-        sscanf(input, "%d", &b);
-	gotb = 1;
+        sscanf(input, "%d", &a);
         return count;
 }
 
-int procf_write_operator(struct file *file, const char *buffer, unsigned long count, void *data)
+int write_operand2(struct file *file, const char *buffer, unsigned long count, void *data)
 {
         char input[16];
-	printk(KERN_INFO "procf_write_operator is called.\n");
+        printk(KERN_INFO "write_operand2 is called.\n");
+        if (copy_from_user(input, buffer, count))
+                return -EFAULT;
+        sscanf(input, "%d", &b);
+        return count;
+}
+
+int write_operator(struct file *file, const char *buffer, unsigned long count, void *data)
+{
+        char input[16];
+        printk(KERN_INFO "write_operator is called.\n");
         if (copy_from_user(input, buffer, count))
                 return -EFAULT;
         c = input[0];
         return count;
 }
 
+/////////////////
+static const struct file_operations result_fops = {
+        .owner = THIS_MODULE,
+        .read = result_read,
+};
+
+static struct miscdevice result_dev = {
+	MISC_DYNAMIC_MINOR, "test_result", &result_fops
+};
+
+/////////////////
+static const struct file_operations operand1_fops = {
+        .owner = THIS_MODULE,
+        .write = write_operand1,
+};
+
+static struct miscdevice operand1_dev = {
+        MISC_DYNAMIC_MINOR, "test_operand1", &operand1_fops
+};
+////
+static const struct file_operations operand2_fops = {
+        .owner = THIS_MODULE,
+        .write = write_operand2,
+};
+
+static struct miscdevice operand2_dev = {
+        MISC_DYNAMIC_MINOR, "test_operand2", &operand2_fops
+};
+////
+static const struct file_operations operator_fops = {
+        .owner = THIS_MODULE,
+        .write = write_operator,
+};
+
+static struct miscdevice operator_dev = {
+        MISC_DYNAMIC_MINOR, "test_operator", &operator_fops
+};
+/////////////////
+
 int __init test_init(void)
 {
 	printk(KERN_INFO "test module is loaded\n");
-
-	mf_proc_file_operand1 = create_proc_entry("test_operand1.in", 0644, NULL);
-	mf_proc_file_operand2 = create_proc_entry("test_operand2.in", 0644, NULL);
-	mf_proc_file_operator = create_proc_entry("test_operator.in", 0644, NULL);
-
-	if (mf_proc_file_operand1 == NULL) {
-        	printk(KERN_INFO "Error: could not initialize /proc/test_operand1.in\n");
-        	return -ENOMEM;
-	}
-	if (mf_proc_file_operand2 == NULL) {
-                printk(KERN_INFO "Error: could not initialize /proc/test_operand2.in\n");
-                return -ENOMEM;
-        }
-	if (mf_proc_file_operator == NULL) {
-                printk(KERN_INFO "Error: could not initialize /proc/test_operator.in\n");
-                return -ENOMEM;
-        }
-
-	mf_proc_file_operand1->write_proc = procf_write_operand1;
-	mf_proc_file_operand2->write_proc = procf_write_operand2;
-	mf_proc_file_operator->write_proc = procf_write_operator;
-
-	if (create_proc_read_entry("test.out", 0, NULL, read_proc, NULL) == 0) {
-		printk(KERN_ERR "Unable to register \"test.out\" proc file\n");
-		return -ENOMEM;
-	}
-
+	if (misc_register(&result_dev))
+		printk(KERN_ERR "Unable to register test misc devise!\n");
+	if (misc_register(&operand1_dev))
+                printk(KERN_ERR "Unable to register test misc devise!\n");
+	if (misc_register(&operand2_dev))
+                printk(KERN_ERR "Unable to register test misc devise!\n");
+	if (misc_register(&operator_dev))
+                printk(KERN_ERR "Unable to register test misc devise!\n");
 	return 0;
 }
 
@@ -117,11 +124,10 @@ module_init(test_init);
 
 static void __exit test_exit(void)
 {
-	remove_proc_entry("test.out", NULL);
-	remove_proc_entry("test_operand1.in", NULL);
-	remove_proc_entry("test_operand2.in", NULL);
-	remove_proc_entry("test_operator.in", NULL);
-	printk(KERN_INFO "test module is unloaded");
+	misc_deregister(&result_dev);
+	misc_deregister(&operand1_dev);
+	misc_deregister(&operand2_dev);
+	misc_deregister(&operator_dev);
 }
 
 module_exit(test_exit);
